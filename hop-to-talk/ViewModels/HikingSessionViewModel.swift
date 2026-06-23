@@ -392,18 +392,13 @@ final class HikingSessionViewModel {
 
         switch packet.kind {
         case .streamChunk, .burstMessage, .burstSegment:
-            // Live streams are gated on the floor holder, but Mode Hemat bursts
-            // arrive after a fire-and-forget claim that may never have reached us
-            // (the radio was dormant when it was sent), so always play them.
-            let isBurst = packet.kind == .burstMessage || packet.kind == .burstSegment
-            if isBurst || floorControl.floorState.holder == packet.source {
-                HopLog.audio.notice("🔊 PLAY \(String(describing: packet.kind)) seq=\(packet.sequence) \(packet.payload.count)B from \(HopLog.short(packet.source))")
-                audioService.playPCM(packet.payload)
-            } else {
-                HopLog.audio.notice(
-                    "🔇 audio NOT played — floor holder is \(self.floorControl.floorState.holder.map { HopLog.short($0) } ?? "none"), packet from \(HopLog.short(packet.source))"
-                )
-            }
+            // Always play received audio. Previously this was gated on the floor
+            // holder being set from a separate floor-claim packet — if that claim
+            // was lost, late, or reordered, real voice got silently dropped. The
+            // floor state still drives the on-screen "who's talking" banner above;
+            // it just no longer blocks playback.
+            HopLog.audio.notice("🔊 PLAY \(String(describing: packet.kind)) seq=\(packet.sequence) \(packet.payload.count)B from \(HopLog.short(packet.source))")
+            audioService.playPCM(packet.payload)
             if let forward = await operatingModeService.forwardPacketIfNeeded(packet) {
                 await operatingModeService.forward(packet: forward, excludingPeer: packet.source)
             }

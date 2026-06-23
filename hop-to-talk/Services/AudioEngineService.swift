@@ -77,12 +77,17 @@ final class AudioEngineService {
     private func activateSession() throws {
         let session = AVAudioSession.sharedInstance()
         do {
+            // .videoChat routes to the loud speaker (with echo cancellation),
+            // unlike .voiceChat which sends audio to the quiet earpiece like a
+            // phone call — the usual reason "the other phone makes no sound".
             try session.setCategory(
                 .playAndRecord,
-                mode: .voiceChat,
-                options: [.allowBluetooth, .defaultToSpeaker]
+                mode: .videoChat,
+                options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker]
             )
             try session.setActive(true)
+            // Force the loudspeaker when not on Bluetooth, so voice is audible.
+            try? session.overrideOutputAudioPort(.speaker)
         } catch {
             throw AudioEngineError.sessionConfigurationFailed
         }
