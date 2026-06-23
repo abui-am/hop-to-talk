@@ -87,15 +87,18 @@ final class AudioEngineService {
         }
     }
 
+    /// The format the engine graph runs in. AVAudioEngine's mixer expects
+    /// standard (non-interleaved Float32) buffers — connecting the player with an
+    /// interleaved Int16 format throws inside CoreAudio and crashes the app, and
+    /// can also silently drop audio. We keep Int16 only on the network wire and
+    /// convert at playback.
+    private var playbackFormat: AVAudioFormat {
+        AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
+    }
+
     private func setupEngine() {
         engine.attach(playerNode)
-        let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: sampleRate,
-            channels: 1,
-            interleaved: true
-        )!
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+        engine.connect(playerNode, to: engine.mainMixerNode, format: playbackFormat)
     }
 
     func startStreamingCapture() async throws {
@@ -182,26 +185,27 @@ final class AudioEngineService {
 
     func playPCM(_ data: Data) {
         guard !data.isEmpty else { return }
-        let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: sampleRate,
-            channels: 1,
-            interleaved: true
-        )!
-        // Two bytes per Int16 sample. Drop a trailing odd byte so the copy
-        // never runs past the buffer we allocated.
+        // Two bytes per Int16 sample. Drop a trailing odd byte so reads never
+        // run past the sample count.
         let frameCount = data.count / 2
         guard frameCount > 0 else { return }
+
+        // Build a Float32 buffer in the engine's playback format directly from
+        // the Int16 wire bytes, so the buffer always matches the player node's
+        // connection format (a mismatch crashes scheduleBuffer).
         guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: format,
+            pcmFormat: playbackFormat,
             frameCapacity: AVAudioFrameCount(frameCount)
-        ) else {
+        ), let output = buffer.floatChannelData?[0] else {
             return
         }
-        buffer.frameLength = buffer.frameCapacity
+        buffer.frameLength = AVAudioFrameCount(frameCount)
+        let scale = 1.0 / Float(Int16.max)
         data.withUnsafeBytes { rawBuffer in
-            guard let source = rawBuffer.baseAddress else { return }
-            memcpy(buffer.int16ChannelData![0], source, frameCount * 2)
+            let samples = rawBuffer.bindMemory(to: Int16.self)
+            for index in 0..<frameCount {
+                output[index] = Float(samples[index]) * scale
+            }
         }
         if !engine.isRunning {
             try? activateSession()
