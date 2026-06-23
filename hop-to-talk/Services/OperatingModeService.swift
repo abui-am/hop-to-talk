@@ -13,11 +13,13 @@ final class OperatingModeService {
     private let mesh = MeshRelayService()
     private var packetTask: Task<Void, Never>?
     private var signalTask: Task<Void, Never>?
+    private var connectedTask: Task<Void, Never>?
     private var coolingTask: Task<Void, Never>?
     private var audioSequence: UInt32 = 0
 
     var onPacketReceived: ((HopPacket) -> Void)?
     var onSignalUpdate: (([UUID: Double]) -> Void)?
+    var onConnectedPeersUpdate: (([UUID]) -> Void)?
 
     private(set) var sessionState: NetworkSessionState = .dormant
     private(set) var operatingMode: HikingOperatingMode = .connected
@@ -83,6 +85,7 @@ final class OperatingModeService {
     func stopHiking() async {
         packetTask?.cancel()
         signalTask?.cancel()
+        connectedTask?.cancel()
         coolingTask?.cancel()
         await network.teardown()
         sessionState = .dormant
@@ -120,6 +123,12 @@ final class OperatingModeService {
         signalTask = Task {
             for await strengths in await network.signalUpdates {
                 onSignalUpdate?(strengths)
+            }
+        }
+        connectedTask?.cancel()
+        connectedTask = Task {
+            for await peers in await network.connectedPeers {
+                onConnectedPeersUpdate?(peers)
             }
         }
     }

@@ -17,8 +17,15 @@ actor PeerNetworkService {
     private let signalStream: AsyncStream<[UUID: Double]>
     private let signalContinuation: AsyncStream<[UUID: Double]>.Continuation
 
+    private let connectedStream: AsyncStream<[UUID]>
+    private let connectedContinuation: AsyncStream<[UUID]>.Continuation
+
     var incomingPackets: AsyncStream<HopPacket> { incomingStream }
     var signalUpdates: AsyncStream<[UUID: Double]> { signalStream }
+    /// Emits the current set of connected peer IDs every time a peer joins or
+    /// drops, so the UI can show a reliable "connected" state instead of
+    /// guessing from signal-strength samples.
+    var connectedPeers: AsyncStream<[UUID]> { connectedStream }
 
     init() {
         var packetContinuation: AsyncStream<HopPacket>.Continuation!
@@ -28,6 +35,14 @@ actor PeerNetworkService {
         var signalCont: AsyncStream<[UUID: Double]>.Continuation!
         signalStream = AsyncStream { signalCont = $0 }
         signalContinuation = signalCont
+
+        var connectedCont: AsyncStream<[UUID]>.Continuation!
+        connectedStream = AsyncStream { connectedCont = $0 }
+        connectedContinuation = connectedCont
+    }
+
+    private func emitConnectedPeers() {
+        connectedContinuation.yield(Array(connections.keys))
     }
 
     func setPerformanceMode(_ mode: WAPerformanceMode) {
@@ -83,6 +98,7 @@ actor PeerNetworkService {
         receiveTasks.removeAll()
         connections.removeAll()
         isPersistent = false
+        emitConnectedPeers()
     }
 
     func send(_ packet: HopPacket, excludingPeer: UUID? = nil) async {
@@ -174,12 +190,19 @@ actor PeerNetworkService {
         let peerID = await resolvePeerID(for: connection) ?? UUID()
         connections[peerID] = connection
         startReceiveLoop(for: peerID, connection: connection)
+        emitConnectedPeers()
     }
 
     private func attachOutgoing(_ connection: NetworkConnection<UDP>) async {
         let peerID = await resolvePeerID(for: connection) ?? UUID()
         connections[peerID] = connection
         startReceiveLoop(for: peerID, connection: connection)
+        emitConnectedPeers()
+    }
+
+    private func dropConnection(_ peerID: UUID) {
+        guard connections.removeValue(forKey: peerID) != nil else { return }
+        emitConnectedPeers()
     }
 
     private func resolvePeerID(for connection: NetworkConnection<UDP>) async -> UUID? {
@@ -204,7 +227,7 @@ actor PeerNetworkService {
                     }
                 }
             } catch {
-                connections.removeValue(forKey: peerID)
+                self.dropConnection(peerID)
             }
         }
         Task {

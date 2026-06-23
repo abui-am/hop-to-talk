@@ -32,6 +32,7 @@ final class HikingSessionViewModel {
     var isResting = false
     var statusMessage = "Siap di basecamp"
     var crewStatuses: [CrewMemberStatus] = []
+    private(set) var connectedPeerIDs: Set<UUID> = []
 
     let pairingService = PairingService()
     let floorControl = FloorControlService()
@@ -77,9 +78,7 @@ final class HikingSessionViewModel {
     var radioConnectionLevel: RadioConnectionLevel {
         switch operatingModeService.sessionState {
         case .activeConnected, .burstActive:
-            return crewStatuses.contains(where: { $0.linkState == .inRange || $0.linkState == .weakSignal })
-                ? .live
-                : .searching
+            return connectedPeerIDs.isEmpty ? .searching : .live
         case .establishing, .coolingDown:
             return .searching
         case .dormant:
@@ -105,8 +104,12 @@ final class HikingSessionViewModel {
     }
 
     var nearbyCrewLabel: String {
-        let nearby = crewStatuses.filter { $0.linkState == .inRange || $0.linkState == .weakSignal }.count
-        return "\(nearby + 1)/\(party.memberCount) rekan dekat"
+        // Count actual live connections (reliable), not inferred signal levels.
+        let connected = connectedPeerIDs.count
+        if connected == 0 {
+            return "Belum ada rekan terhubung"
+        }
+        return "\(connected) rekan terhubung"
     }
 
     var isPTTEnabled: Bool {
@@ -340,6 +343,35 @@ final class HikingSessionViewModel {
                 self?.applySignalStrengths(strengths)
             }
         }
+        operatingModeService.onConnectedPeersUpdate = { [weak self] peers in
+            Task { @MainActor in
+                self?.applyConnectedPeers(peers)
+            }
+        }
+    }
+
+    private func applyConnectedPeers(_ peers: [UUID]) {
+        connectedPeerIDs = Set(peers)
+        // Light up the crew rows we recognize; mark the rest offline.
+        for index in crewStatuses.indices {
+            if connectedPeerIDs.contains(crewStatuses[index].member.id) {
+                if crewStatuses[index].linkState == .offline {
+                    crewStatuses[index].linkState = .inRange
+                }
+            } else {
+                crewStatuses[index].linkState = .offline
+                crewStatuses[index].signalStrength = 0
+            }
+        }
+        updateConnectionStatusMessage()
+    }
+
+    private func updateConnectionStatusMessage() {
+        guard phase == .activeHike, !isTransmitting, !isResting else { return }
+        guard operatingMode == .connected else { return }
+        statusMessage = connectedPeerIDs.isEmpty
+            ? "Mencari rekan di jalur..."
+            : "Terhubung • \(connectedPeerIDs.count) rekan di radio"
     }
 
     private func handleIncoming(_ packet: HopPacket) async {
@@ -375,16 +407,25 @@ final class HikingSessionViewModel {
         for (peerID, strength) in strengths {
             if let index = crewStatuses.firstIndex(where: { $0.member.id == peerID }) {
                 crewStatuses[index].signalStrength = strength
-                crewStatuses[index].linkState = strength > 0.6 ? .inRange : .weakSignal
+                // Only refine the link quality when we actually have a reading;
+                // a missing/zero sample shouldn't knock a connected peer down.
+                if strength > 0.6 {
+                    crewStatuses[index].linkState = .inRange
+                } else if strength > 0 {
+                    crewStatuses[index].linkState = .weakSignal
+                } else if connectedPeerIDs.contains(peerID) {
+                    crewStatuses[index].linkState = .inRange
+                }
             }
         }
     }
 
     private func rebuildCrewStatuses() {
         var statuses = party.members.map { member in
-            CrewMemberStatus(
+            let connected = connectedPeerIDs.contains(member.id)
+            return CrewMemberStatus(
                 member: member,
-                linkState: .offline,
+                linkState: connected ? .inRange : .offline,
                 signalStrength: 0,
                 isSpeaking: floorControl.floorState.holder == member.id
             )
