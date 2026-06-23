@@ -25,8 +25,8 @@ final class HikingSessionViewModel {
 
     var party = HikingParty(name: "Tim Gunung", members: [], localPosition: .middle)
     var duration: HikeDuration = .medium
-    var operatingMode: HikingOperatingMode = .ecoBurst
-    var batteryTier: BatteryTier = .balanced
+    var operatingMode: HikingOperatingMode = .connected
+    var batteryTier: BatteryTier = .alwaysOn
 
     var hikeStartDate: Date?
     var pttCount = 0

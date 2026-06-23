@@ -31,16 +31,14 @@ struct HikeConfigView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Mode komunikasi")
                         .font(.headline)
-                    ForEach(HikingOperatingMode.allCases) { mode in
-                        RecommendationCard(
-                            title: mode.displayName,
-                            subtitle: mode.subtitle,
-                            isRecommended: mode == HikingOperatingMode.recommended(for: viewModel.duration.rawValue),
-                            isSelected: viewModel.operatingMode == mode
-                        ) {
-                            viewModel.operatingMode = mode
-                        }
-                    }
+                    // Dikunci ke Mode Live: kedua HP wajib mode sama supaya suara
+                    // jalan. Mengunci di sini menghilangkan kemungkinan salah mode.
+                    RecommendationCard(
+                        title: HikingOperatingMode.connected.displayName,
+                        subtitle: "Walkie-talkie real-time — kedua HP otomatis pakai mode ini",
+                        isRecommended: true,
+                        isSelected: true
+                    ) {}
                 }
 
                 VStack(alignment: .leading, spacing: 10) {

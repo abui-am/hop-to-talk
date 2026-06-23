@@ -51,9 +51,9 @@ enum BatteryTier: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 
     static func recommended(for durationHours: Double) -> BatteryTier {
-        if durationHours < 4 { return .balanced }
-        if durationHours < 6 { return .eco }
-        return .eco
+        // Fokus ke Always On: layar tetap nyala supaya terima suara andal di
+        // foreground (Hiking Mode). Tier lain tetap bisa dipilih manual.
+        .alwaysOn
     }
 }
 
