@@ -7,6 +7,7 @@ enum PacketKind: UInt8, Sendable {
     case burstSegment = 4
     case heartbeat = 5
     case peerAnnounce = 6
+    case audioAck = 7
     case floorClaim = 10
     case floorRelease = 11
     case floorBusy = 12

@@ -4,6 +4,7 @@ struct ActiveHikeView: View {
     @Bindable var viewModel: HikingSessionViewModel
     @State private var showRestSheet = false
     @State private var showEndConfirmation = false
+    @State private var showClipHistory = false
 
     var body: some View {
         VStack(spacing: 14) {
@@ -21,6 +22,14 @@ struct ActiveHikeView: View {
                     modeName: viewModel.operatingMode.displayName
                 )
                 Spacer()
+                Button {
+                    showClipHistory = true
+                } label: {
+                    Label("\(viewModel.receivedClips.count)", systemImage: "waveform.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Riwayat suara masuk")
             }
             .padding(.horizontal)
 
@@ -75,6 +84,9 @@ struct ActiveHikeView: View {
         }
         .sheet(isPresented: $showRestSheet) {
             RestBreakSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showClipHistory) {
+            ReceivedClipsView(viewModel: viewModel)
         }
         .confirmationDialog(
             "Akhiri pendakian?",

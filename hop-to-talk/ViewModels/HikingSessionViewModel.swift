@@ -35,6 +35,13 @@ final class HikingSessionViewModel {
     var crewStatuses: [CrewMemberStatus] = []
     private(set) var connectedPeerIDs: Set<UUID> = []
 
+    /// Replayable history of voice received from other hikers (newest first).
+    private(set) var receivedClips: [VoiceClip] = []
+    private var incomingBuffers: [UUID: Data] = [:]
+    private var lastAudioAt: [UUID: TimeInterval] = [:]
+    private var clipFlushTask: Task<Void, Never>?
+    private let maxClipHistory = 30
+
     let pairingService = PairingService()
     let floorControl = FloorControlService()
     let batteryManager = BatteryManager()
@@ -44,6 +51,7 @@ final class HikingSessionViewModel {
     private var packetLoopTask: Task<Void, Never>?
     private var hikeTimerTask: Task<Void, Never>?
     private(set) var isTransmitting = false
+    private var lastAckSent: [UUID: TimeInterval] = [:]
 
     var localDisplayName: String {
         get { PeerIdentity.localDisplayName }
@@ -196,6 +204,7 @@ final class HikingSessionViewModel {
         batteryManager.applyHikingMode(true)
         statusMessage = operatingMode == .connected ? "Mendengarkan jalur..." : "Mode hemat — tekan PTT untuk kirim"
         rebuildCrewStatuses()
+        startClipFlushLoop()
 
         _ = await audioService.requestMicrophoneAccess()
 
@@ -214,6 +223,9 @@ final class HikingSessionViewModel {
         await operatingModeService.stopHiking()
         batteryManager.applyHikingMode(false)
         audioService.stop()
+        clipFlushTask?.cancel()
+        // Flush anything still buffered so it lands in history.
+        for source in Array(incomingBuffers.keys) { finalizeClip(from: source) }
         phase = .summary
     }
 
@@ -328,6 +340,63 @@ final class HikingSessionViewModel {
         }
     }
 
+    private func accumulateIncomingAudio(_ payload: Data, from source: UUID) {
+        let now = Date().timeIntervalSince1970
+        // A >2s gap means the previous transmission ended — finalize it first.
+        if let last = lastAudioAt[source], now - last > 2.0 {
+            finalizeClip(from: source)
+        }
+        incomingBuffers[source, default: Data()].append(payload)
+        lastAudioAt[source] = now
+    }
+
+    private func finalizeClip(from source: UUID) {
+        guard let pcm = incomingBuffers[source], !pcm.isEmpty else { return }
+        incomingBuffers[source] = nil
+        lastAudioAt[source] = nil
+        let name = party.members.first(where: { $0.id == source })?.displayName ?? "Rekan"
+        let clip = VoiceClip(sourceID: source, sourceName: name, receivedAt: Date(), pcm: pcm)
+        receivedClips.insert(clip, at: 0)
+        if receivedClips.count > maxClipHistory {
+            receivedClips.removeLast(receivedClips.count - maxClipHistory)
+        }
+        HopLog.audio.notice("💾 saved voice clip from \(HopLog.short(source)) — \(clip.durationLabel), history=\(self.receivedClips.count)")
+    }
+
+    /// Flushes a transmission to history shortly after it goes quiet, even if the
+    /// closing streamEnd packet was lost.
+    private func startClipFlushLoop() {
+        clipFlushTask?.cancel()
+        clipFlushTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self else { return }
+                let now = Date().timeIntervalSince1970
+                let stale = self.lastAudioAt.filter { now - $0.value > 1.5 }.map(\.key)
+                for source in stale {
+                    self.finalizeClip(from: source)
+                }
+            }
+        }
+    }
+
+    /// Replays a stored clip through the speaker.
+    func replayClip(_ clip: VoiceClip) {
+        HopLog.audio.notice("⏯️ replay clip from \(HopLog.short(clip.sourceID)) — \(clip.durationLabel)")
+        audioService.playPCM(clip.pcm)
+    }
+
+    /// Sends a lightweight receipt back to the speaker, at most once per second
+    /// per source, so audio traffic isn't doubled by acks.
+    private func sendAudioAckIfNeeded(to source: UUID, seq: UInt32) async {
+        guard source != PeerIdentity.localDeviceID else { return }
+        let now = Date().timeIntervalSince1970
+        if let last = lastAckSent[source], now - last < 1.0 { return }
+        lastAckSent[source] = now
+        let ack = HopPacket(kind: .audioAck, source: PeerIdentity.localDeviceID, sequence: seq)
+        await operatingModeService.broadcast(packet: ack)
+    }
+
     private func sendStreamChunk(_ chunk: Data) async {
         let packet = HopPacket(
             kind: .streamChunk,
@@ -399,15 +468,21 @@ final class HikingSessionViewModel {
             // it just no longer blocks playback.
             HopLog.audio.notice("🔊 PLAY \(String(describing: packet.kind)) seq=\(packet.sequence) \(packet.payload.count)B from \(HopLog.short(packet.source))")
             audioService.playPCM(packet.payload)
+            accumulateIncomingAudio(packet.payload, from: packet.source)
+            // Tell the speaker we actually received their voice, so they can see
+            // an end-to-end "✅ teman menerima suara" on their own phone.
+            await sendAudioAckIfNeeded(to: packet.source, seq: packet.sequence)
             if let forward = await operatingModeService.forwardPacketIfNeeded(packet) {
                 await operatingModeService.forward(packet: forward, excludingPeer: packet.source)
             }
+        case .audioAck:
+            HopLog.audio.notice("✅ teman MENERIMA suara — ack seq=\(packet.sequence) dari \(HopLog.short(packet.source))")
         case .heartbeat, .peerAnnounce, .floorClaim, .floorRelease, .floorBusy, .floorHeartbeat:
             if let forward = await operatingModeService.forwardPacketIfNeeded(packet) {
                 await operatingModeService.forward(packet: forward, excludingPeer: packet.source)
             }
         case .streamEnd:
-            break
+            finalizeClip(from: packet.source)
         }
 
         rebuildCrewStatuses()
