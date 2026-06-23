@@ -102,7 +102,7 @@ hop-to-talk/
 - **Foreground receive** — reliable audio receive requires the app in foreground (Hiking Mode); background offline receive is not supported on iOS
 - **Multi-peer connect** — browse logic currently connects to the first discovered peer per session; full 3–6 person mesh needs connecting to all paired crew (planned improvement)
 - **Pairing required** — crew must be paired at basecamp; adding members mid-trail without signal is impractical
-- **Audio format** — capture sample rate may differ from playback (16 kHz); quality tuning in progress
+- **Audio format** — mic capture is resampled to a shared 16 kHz mono wire format so sender and receiver always match; further quality tuning in progress
 - **No automated tests** — manual device testing required for radio features
 
 ## Manual test checklist

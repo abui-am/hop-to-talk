@@ -288,17 +288,35 @@ final class HikingSessionViewModel {
             await operatingModeService.broadcast(packet: endPacket)
         } else {
             let burstData = audioService.finishBurstCapture()
-            let packet = HopPacket(
-                kind: .burstMessage,
-                source: PeerIdentity.localDeviceID,
-                sequence: operatingModeService.nextAudioSequence(),
-                payload: burstData
-            )
-            await operatingModeService.broadcast(packet: packet)
+            await sendBurstSegments(burstData)
         }
 
         await operatingModeService.broadcast(packet: floorControl.releaseFloor())
         await operatingModeService.finishPTT()
+    }
+
+    /// Mode Hemat records the whole press into one buffer (up to ~15 s). That is
+    /// far larger than a single UDP datagram (MTU), so the old single-packet send
+    /// silently failed and peers heard nothing. Split it into MTU-safe segments;
+    /// the receiver schedules them back-to-back for continuous playback.
+    private func sendBurstSegments(_ data: Data) async {
+        guard !data.isEmpty else { return }
+        // 1024 bytes = 512 Int16 samples. Even, so a sample is never split
+        // across two packets (which would misalign playback).
+        let maxPayload = 1_024
+        var offset = 0
+        while offset < data.count {
+            let end = min(offset + maxPayload, data.count)
+            let segment = data.subdata(in: offset..<end)
+            let packet = HopPacket(
+                kind: .burstSegment,
+                source: PeerIdentity.localDeviceID,
+                sequence: operatingModeService.nextAudioSequence(),
+                payload: segment
+            )
+            await operatingModeService.broadcast(packet: packet)
+            offset = end
+        }
     }
 
     private func sendStreamChunk(_ chunk: Data) async {
@@ -332,7 +350,11 @@ final class HikingSessionViewModel {
 
         switch packet.kind {
         case .streamChunk, .burstMessage, .burstSegment:
-            if floorControl.floorState.holder == packet.source || packet.kind == .burstMessage {
+            // Live streams are gated on the floor holder, but Mode Hemat bursts
+            // arrive after a fire-and-forget claim that may never have reached us
+            // (the radio was dormant when it was sent), so always play them.
+            let isBurst = packet.kind == .burstMessage || packet.kind == .burstSegment
+            if isBurst || floorControl.floorState.holder == packet.source {
                 audioService.playPCM(packet.payload)
             }
             if let forward = await operatingModeService.forwardPacketIfNeeded(packet) {

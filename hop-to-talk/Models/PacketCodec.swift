@@ -36,7 +36,8 @@ struct HopPacket: Sendable {
 }
 
 enum PacketCodec {
-    private static let headerSize = 23
+    // kind (1) + source UUID (16) + sequence (4) + ttl (1) = 22 bytes
+    private static let headerSize = 22
 
     static func encode(_ packet: HopPacket) -> Data {
         var data = Data(capacity: headerSize + packet.payload.count)

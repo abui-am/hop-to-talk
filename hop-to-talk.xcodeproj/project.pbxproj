@@ -267,7 +267,7 @@
 				CODE_SIGN_ENTITLEMENTS = "hop-to-talk/hop-to-talk.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 35SGY39Y8Z;
+				DEVELOPMENT_TEAM = 7Y44BM6QU8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "hop-to-talk/Info.plist";
@@ -276,7 +276,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.abui.hop-to-talk";
+				PRODUCT_BUNDLE_IDENTIFIER = com.abui.push;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -296,7 +296,7 @@
 				CODE_SIGN_ENTITLEMENTS = "hop-to-talk/hop-to-talk.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 35SGY39Y8Z;
+				DEVELOPMENT_TEAM = 7Y44BM6QU8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "hop-to-talk/Info.plist";
@@ -305,7 +305,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.abui.hop-to-talk";
+				PRODUCT_BUNDLE_IDENTIFIER = com.abui.push;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;

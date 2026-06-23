@@ -34,6 +34,19 @@ final class AudioEngineService {
     private let sampleRate: Double = 16_000
     private var burstBuffer = Data()
 
+    /// Wire/playback format shared by every device: 16 kHz, mono, Int16.
+    /// The mic hardware usually runs at 44.1/48 kHz, so capture is resampled
+    /// down to this before transmit; otherwise the receiver (which plays at
+    /// 16 kHz) hears voice ~3x too slow and deep.
+    private var wireFormat: AVAudioFormat {
+        AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: sampleRate,
+            channels: 1,
+            interleaved: true
+        )!
+    }
+
     init() {
         setupEngine()
     }
@@ -113,8 +126,14 @@ final class AudioEngineService {
         }
 
         engine.prepare()
+        // Build a converter from the mic's hardware format to the shared
+        // 16 kHz mono wire format. Captured here (not on the audio thread) and
+        // used only inside the serial tap callback, so it needs no locking.
+        let target = wireFormat
+        let converter = AVAudioConverter(from: tapFormat, to: target)
         input.installTap(onBus: 0, bufferSize: 1_024, format: tapFormat) { [weak self] buffer, _ in
-            guard let self, let data = Self.pcmData(from: buffer) else { return }
+            guard let self,
+                  let data = Self.wireData(from: buffer, using: converter, to: target) else { return }
             Task { @MainActor in
                 self.onAudioChunk?(data)
             }
@@ -169,16 +188,20 @@ final class AudioEngineService {
             channels: 1,
             interleaved: true
         )!
+        // Two bytes per Int16 sample. Drop a trailing odd byte so the copy
+        // never runs past the buffer we allocated.
+        let frameCount = data.count / 2
+        guard frameCount > 0 else { return }
         guard let buffer = AVAudioPCMBuffer(
             pcmFormat: format,
-            frameCapacity: AVAudioFrameCount(data.count) / 2
+            frameCapacity: AVAudioFrameCount(frameCount)
         ) else {
             return
         }
         buffer.frameLength = buffer.frameCapacity
         data.withUnsafeBytes { rawBuffer in
             guard let source = rawBuffer.baseAddress else { return }
-            memcpy(buffer.int16ChannelData![0], source, data.count)
+            memcpy(buffer.int16ChannelData![0], source, frameCount * 2)
         }
         if !engine.isRunning {
             try? activateSession()
@@ -199,6 +222,42 @@ final class AudioEngineService {
         stopStreamingCapture()
         playerNode.stop()
         engine.stop()
+    }
+
+    /// Resamples a captured buffer into the 16 kHz mono wire format and returns
+    /// its raw Int16 bytes. Runs on the realtime audio thread.
+    private static func wireData(
+        from buffer: AVAudioPCMBuffer,
+        using converter: AVAudioConverter?,
+        to target: AVAudioFormat
+    ) -> Data? {
+        // Already in the wire format (e.g. some mics expose 16 kHz Int16) —
+        // skip the converter entirely.
+        if converter == nil || buffer.format == target {
+            return pcmData(from: buffer)
+        }
+        guard let converter else { return pcmData(from: buffer) }
+
+        let ratio = target.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1_024
+        guard let outBuffer = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else {
+            return nil
+        }
+
+        var suppliedInput = false
+        var conversionError: NSError?
+        let status = converter.convert(to: outBuffer, error: &conversionError) { _, inputStatus in
+            if suppliedInput {
+                inputStatus.pointee = .noDataNow
+                return nil
+            }
+            suppliedInput = true
+            inputStatus.pointee = .haveData
+            return buffer
+        }
+
+        guard status != .error, outBuffer.frameLength > 0 else { return nil }
+        return pcmData(from: outBuffer)
     }
 
     private static func pcmData(from buffer: AVAudioPCMBuffer) -> Data? {
