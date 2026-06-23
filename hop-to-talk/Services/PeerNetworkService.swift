@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import os
 import WiFiAware
 
 actor PeerNetworkService {
@@ -103,9 +104,25 @@ actor PeerNetworkService {
 
     func send(_ packet: HopPacket, excludingPeer: UUID? = nil) async {
         let data = PacketCodec.encode(packet)
-        for (peerID, connection) in connections where peerID != excludingPeer {
-            try? await send(data: data, on: connection)
+        let targets = connections.filter { $0.key != excludingPeer }
+        guard !targets.isEmpty else {
+            HopLog.net.warning(
+                "📤 TX \(String(describing: packet.kind)) seq=\(packet.sequence) \(data.count)B but NO peers connected"
+            )
+            return
         }
+        var sent = 0
+        for (_, connection) in targets {
+            do {
+                try await send(data: data, on: connection)
+                sent += 1
+            } catch {
+                HopLog.net.error("send failed: \(error.localizedDescription)")
+            }
+        }
+        HopLog.net.notice(
+            "📤 TX \(String(describing: packet.kind)) seq=\(packet.sequence) \(data.count)B → \(sent)/\(targets.count) peers"
+        )
     }
 
     func connectedPeerIDs() -> [UUID] {
@@ -190,6 +207,7 @@ actor PeerNetworkService {
         let peerID = await resolvePeerID(for: connection) ?? UUID()
         connections[peerID] = connection
         startReceiveLoop(for: peerID, connection: connection)
+        HopLog.net.notice("🤝 peer connected (inbound) \(HopLog.short(peerID)) — total \(self.connections.count)")
         emitConnectedPeers()
     }
 
@@ -197,11 +215,13 @@ actor PeerNetworkService {
         let peerID = await resolvePeerID(for: connection) ?? UUID()
         connections[peerID] = connection
         startReceiveLoop(for: peerID, connection: connection)
+        HopLog.net.notice("🤝 peer connected (outbound) \(HopLog.short(peerID)) — total \(self.connections.count)")
         emitConnectedPeers()
     }
 
     private func dropConnection(_ peerID: UUID) {
         guard connections.removeValue(forKey: peerID) != nil else { return }
+        HopLog.net.notice("❌ peer dropped \(HopLog.short(peerID)) — total \(self.connections.count)")
         emitConnectedPeers()
     }
 
@@ -223,7 +243,12 @@ actor PeerNetworkService {
                 while !Task.isCancelled {
                     let message = try await connection.receive()
                     if let packet = PacketCodec.decode(message.content) {
+                        HopLog.net.notice(
+                            "📥 RX \(String(describing: packet.kind)) seq=\(packet.sequence) \(message.content.count)B from \(HopLog.short(peerID))"
+                        )
                         incomingContinuation.yield(packet)
+                    } else {
+                        HopLog.net.error("📥 RX undecodable datagram \(message.content.count)B from \(HopLog.short(peerID))")
                     }
                 }
             } catch {

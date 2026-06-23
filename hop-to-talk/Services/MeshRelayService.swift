@@ -11,7 +11,11 @@ actor MeshRelayService {
 
     func shouldProcess(packet: HopPacket, localPeerID: UUID) -> Bool {
         guard isEnabled else { return packet.source == localPeerID }
-        let key = "\(packet.source.uuidString)-\(packet.sequence)"
+        // Key must include the packet kind: floor-control and audio packets use
+        // independent sequence counters that both start at 1, so without the
+        // kind the first audio chunk collides with the floor claim and gets
+        // dropped as a false duplicate — i.e. no sound on the receiver.
+        let key = "\(packet.source.uuidString)-\(packet.kind.rawValue)-\(packet.sequence)"
         let now = FloorState.nowMillis()
         if let seenAt = recentPackets[key], now - seenAt < dedupWindowMs {
             return false

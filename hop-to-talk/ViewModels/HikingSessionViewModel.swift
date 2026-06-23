@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 @Observable
 @MainActor
@@ -228,7 +229,11 @@ final class HikingSessionViewModel {
     }
 
     func beginPTT() async {
-        guard isPTTEnabled else { return }
+        guard isPTTEnabled else {
+            HopLog.ptt.notice("▶️ PTT ignored (disabled) — resting=\(self.isResting), canTransmit=\(self.floorControl.canTransmit())")
+            return
+        }
+        HopLog.ptt.notice("▶️ PTT START mode=\(self.operatingMode.rawValue) connectedPeers=\(self.connectedPeerIDs.count)")
         isTransmitting = true
         pttCount += 1
 
@@ -278,6 +283,7 @@ final class HikingSessionViewModel {
 
     func endPTT() async {
         guard isTransmitting else { return }
+        HopLog.ptt.notice("⏹️ PTT END mode=\(self.operatingMode.rawValue)")
         isTransmitting = false
         audioService.onAudioChunk = nil
 
@@ -329,6 +335,7 @@ final class HikingSessionViewModel {
             sequence: operatingModeService.nextAudioSequence(),
             payload: chunk
         )
+        HopLog.audio.debug("🎤 mic chunk \(chunk.count)B → streamChunk seq=\(packet.sequence)")
         await operatingModeService.broadcast(packet: packet)
     }
 
@@ -375,7 +382,10 @@ final class HikingSessionViewModel {
     }
 
     private func handleIncoming(_ packet: HopPacket) async {
-        guard await operatingModeService.shouldProcessPacket(packet) else { return }
+        guard await operatingModeService.shouldProcessPacket(packet) else {
+            HopLog.net.debug("🚫 dropped duplicate \(String(describing: packet.kind)) seq=\(packet.sequence)")
+            return
+        }
 
         let memberName = party.members.first(where: { $0.id == packet.source })?.displayName
         floorControl.handleIncoming(packet, memberName: memberName)
@@ -387,7 +397,12 @@ final class HikingSessionViewModel {
             // (the radio was dormant when it was sent), so always play them.
             let isBurst = packet.kind == .burstMessage || packet.kind == .burstSegment
             if isBurst || floorControl.floorState.holder == packet.source {
+                HopLog.audio.notice("🔊 PLAY \(String(describing: packet.kind)) seq=\(packet.sequence) \(packet.payload.count)B from \(HopLog.short(packet.source))")
                 audioService.playPCM(packet.payload)
+            } else {
+                HopLog.audio.notice(
+                    "🔇 audio NOT played — floor holder is \(self.floorControl.floorState.holder.map { HopLog.short($0) } ?? "none"), packet from \(HopLog.short(packet.source))"
+                )
             }
             if let forward = await operatingModeService.forwardPacketIfNeeded(packet) {
                 await operatingModeService.forward(packet: forward, excludingPeer: packet.source)

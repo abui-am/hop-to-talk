@@ -21,7 +21,9 @@ enum HikingOperatingMode: String, Codable, CaseIterable, Identifiable, Sendable 
     }
 
     static func recommended(for durationHours: Double) -> HikingOperatingMode {
-        durationHours < 4 ? .connected : .ecoBurst
+        // Focused on Mode Live for now — it's the path we've verified end to end.
+        // (Mode Hemat/ecoBurst is still selectable but no longer the default.)
+        .connected
     }
 }
 

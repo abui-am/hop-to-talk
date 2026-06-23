@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import Observation
+import os
 
 enum AudioEngineError: LocalizedError {
     case microphoneDenied
@@ -208,8 +209,13 @@ final class AudioEngineService {
             }
         }
         if !engine.isRunning {
-            try? activateSession()
-            try? engine.start()
+            do {
+                try activateSession()
+                try engine.start()
+            } catch {
+                HopLog.audio.error("🔇 playback engine start failed: \(error.localizedDescription)")
+                return
+            }
         }
         isPlaying = true
         playerNode.scheduleBuffer(buffer) { [weak self] in
@@ -220,6 +226,7 @@ final class AudioEngineService {
         if !playerNode.isPlaying {
             playerNode.play()
         }
+        HopLog.audio.debug("🔈 scheduled \(frameCount) frames, engineRunning=\(self.engine.isRunning)")
     }
 
     func stop() {
